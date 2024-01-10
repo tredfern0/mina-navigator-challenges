@@ -85,6 +85,44 @@ describe('SecretMessages', () => {
     }
   })
 
-  it.todo('correctly validates flags');
+  it.only('correctly validates flags', async () => {
+    // Test each branch of this:
+    // If flag 2 is true, then flag 3 must also be true.
+    // If flag 4 is true, then flags 5 and 6 must be false.
+    const flagT = Bool(true);
+    const flagF = Bool(false);
+
+    // First test positive cases - 
+    // flag 2 true, flag 3 true (and flag 4 false so we don't check that condition)
+    const v1 = zkApp.validateFlags(flagT, flagT, flagT, flagF, flagT, flagT)
+    expect(v1.toBoolean()).toBeTruthy()
+    // flag 2 true, flag 3 true
+    const v2 = zkApp.validateFlags(flagT, flagT, flagF, flagF, flagT, flagT)
+    expect(v2.toBoolean()).toBeFalsy()
+
+    // If flag 4 is true, then flags 5 and 6 must be false. (and flag 2 false so we don't check)
+    const v3 = zkApp.validateFlags(flagT, flagF, flagT, flagT, flagF, flagF)
+    expect(v3.toBoolean()).toBeTruthy()
+    // if 5 or 6 or both are true, then should not be valid
+    const v4 = zkApp.validateFlags(flagT, flagF, flagT, flagT, flagT, flagT)
+    expect(v4.toBoolean()).toBeFalsy()
+    const v5 = zkApp.validateFlags(flagT, flagF, flagT, flagT, flagF, flagT)
+    expect(v5.toBoolean()).toBeFalsy()
+    const v6 = zkApp.validateFlags(flagT, flagF, flagT, flagT, flagT, flagF)
+    expect(v6.toBoolean()).toBeFalsy()
+
+    // And now enumerate all cases with flag2 and flag4 false - all should be valid!
+    for (let flag1 of [flagT, flagF]) {
+      for (let flag3 of [flagT, flagF]) {
+        for (let flag5 of [flagT, flagF]) {
+          for (let flag6 of [flagT, flagF]) {
+            const v = zkApp.validateFlags(flag1, flagF, flag3, flagF, flag5, flag6)
+            expect(v.toBoolean()).toBeTruthy()
+          }
+        }
+      }
+    }
+  })
+
 
 });

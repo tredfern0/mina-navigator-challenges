@@ -40,6 +40,7 @@ export class SecretMessages extends SmartContract {
     The message should be a Field, we use the last 6 bits as
     flags.
     */
+
     const bit6 = Field(1);    // ... 000001 = 1
     const bit5 = Field(2);    // ... 000010 = 2
     const bit4 = Field(4);    // ... 000100 = 4
@@ -48,11 +49,11 @@ export class SecretMessages extends SmartContract {
     const bit1 = Field(32);   // ... 100000 = 32
 
     const g6 = Gadgets.and(message, bit6, 1);    // ... 000001
-    const g5 = Gadgets.and(message, bit5, 2);    // ... 000001
-    const g4 = Gadgets.and(message, bit4, 3);    // ... 000001
-    const g3 = Gadgets.and(message, bit3, 4);    // ... 000001
-    const g2 = Gadgets.and(message, bit2, 5);    // ... 000001
-    const g1 = Gadgets.and(message, bit1, 6);    // ... 000001
+    const g5 = Gadgets.and(message, bit5, 2);    // ... 000010
+    const g4 = Gadgets.and(message, bit4, 3);    // ... 000100
+    const g3 = Gadgets.and(message, bit3, 4);    // ... 001000
+    const g2 = Gadgets.and(message, bit2, 5);    // ... 010000
+    const g1 = Gadgets.and(message, bit1, 6);    // ... 100000
 
     const flag6: Bool = g6.equals(bit6);
     const flag5: Bool = g5.equals(bit5);
@@ -66,12 +67,13 @@ export class SecretMessages extends SmartContract {
 
 
   validateFlags(
+    _flag1: Bool,
     flag2: Bool,
     flag3: Bool,
     flag4: Bool,
     flag5: Bool,
     flag6: Bool,
-  ) {
+  ): Bool {
     /*
     3. The flags should be checked according to the following
     If flag 2 is true, then flag 3 must also be true.
@@ -79,17 +81,18 @@ export class SecretMessages extends SmartContract {
     */
 
     // If flag 2 is true, then flag 3 must also be true.
-    Provable.if(
+    const cond1: Bool = Provable.if(
       flag2.equals(true),
       flag3.equals(true),
       Bool(true)
-    ).assertTrue();
+    )
 
     // If flag 4 is true, then flags 5 and 6 must be false.
-    Provable.if(
+    const cond2: Bool = Provable.if(
       flag4.equals(true),
       flag5.equals(false).and(flag6.equals(false)),
       Bool(true)
-    ).assertTrue();
+    )
+    return cond1.and(cond2)
   }
 }
