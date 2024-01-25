@@ -136,6 +136,20 @@ export class SecretMessages extends SmartContract {
     // compute the root after updating
     const [rootAfter, _] = keyWitness.computeRootAndKey(messageAfter);
     this.mapRoot.set(rootAfter);
+
+
+    const messagesReceived = this.messagesReceived.getAndRequireEquals();
+    // If the value in the merkle map was previously 0, this is the first message 
+    // the user has stored and we should increment the counter
+    // Otherwise the user is overwriting their previous message so we should
+    // not increment the counter
+    const messagesReceivedTot = Provable.if(messageBefore.equals(Field(0)),
+      messagesReceived.add(1),
+      messagesReceived
+    )
+    this.messagesReceived.set(messagesReceivedTot);
+
+    this.emitEvent("message-received", messagesReceivedTot);
   }
 
 }
