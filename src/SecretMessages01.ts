@@ -1,6 +1,16 @@
 import { Field, Gadgets, SmartContract, state, State, method, Bool, Provable, UInt64, PublicKey, PrivateKey, MerkleMapWitness, MerkleMap } from 'o1js';
 
 
+// Helper function for appending bits to message
+export function appendFlags(message: Field, bits: Field): Field {
+  // Will throw an error if message is too big - 64 bits is max
+  Gadgets.rangeCheck64(message);
+  const messageShifted = Gadgets.leftShift(message, 6)
+  return Gadgets.xor(messageShifted, bits, 70);
+}
+
+
+
 export class SecretMessages extends SmartContract {
   @state(UInt64) numAddresses = State<UInt64>();
   @state(UInt64) messagesReceived = State<UInt64>();

@@ -1,5 +1,5 @@
-import { SecretMessages } from './SecretMessages01';
-import { Field, Mina, PrivateKey, PublicKey, AccountUpdate, Bool, MerkleMap, MerkleMapWitness } from 'o1js';
+import { SecretMessages, appendFlags } from './SecretMessages01';
+import { Field, Mina, PrivateKey, PublicKey, AccountUpdate, Bool, MerkleMap, MerkleMapWitness, Gadgets } from 'o1js';
 
 
 let proofsEnabled = false;
@@ -143,7 +143,6 @@ describe('SecretMessages', () => {
     // and initializing value to 0
     map.set(address, Field(0));
 
-
     const txnA = await Mina.transaction(deployerAccount, () => {
       zkApp.storeAddress(address)
     });
@@ -198,4 +197,28 @@ describe('SecretMessages', () => {
     // expect(numAddresses).toEqual(1);
   })
   */
+
+  it('properly appends flags', async () => {
+    // make sure round trips are good, and make sure if we have a message
+    const message = Field(123456);
+    const flags = Field(0b001100);
+    const messageWFlags = appendFlags(message, flags);
+    const messageFinal = Gadgets.rightShift(messageWFlags, 6);
+
+    // Should be a valid round trip
+    expect(messageFinal.toString()).toMatch(message.toString());
+  })
+
+
+  it.only('wont append flags to oversized message', async () => {
+    const message = Field(2 ** 64 - 1);
+    const flags = Field(0b001100);
+    try {
+      const messageWFlags = appendFlags(message, flags);
+    } catch (e: any) {
+    }
+
+  })
+
+
 });
