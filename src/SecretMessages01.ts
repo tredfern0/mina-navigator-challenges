@@ -1,7 +1,9 @@
 import { Field, Gadgets, SmartContract, state, State, method, Bool, Provable, UInt64, PublicKey, PrivateKey, MerkleMapWitness, MerkleMap } from 'o1js';
 
+
 export class SecretMessages extends SmartContract {
   @state(UInt64) numAddresses = State<UInt64>();
+  @state(UInt64) messagesReceived = State<UInt64>();
   @state(Field) mapRoot = State<Field>();
 
   events = {
@@ -10,6 +12,12 @@ export class SecretMessages extends SmartContract {
 
   init() {
     super.init();
+    this.messagesReceived.set(UInt64.from(0));
+    this.numAddresses.set(UInt64.from(0));
+
+    // Initialize empty map to store addresses
+    const map = new MerkleMap();
+    this.mapRoot.set(map.getRoot());
   }
 
   @method storeAddress(address: Field) {
@@ -24,10 +32,10 @@ export class SecretMessages extends SmartContract {
 
     // TODO - restrict access to administrator...
     const numAddresses = this.numAddresses.getAndRequireEquals();
+    // if it's 99 we can still add one more, so LT 100 is correct condition
     numAddresses.assertLessThan(UInt64.from(100)), "Too many addresses";
 
     // Use a merkle map to store addresses
-
     this.numAddresses.set(numAddresses.add(1));
   }
 
@@ -95,4 +103,29 @@ export class SecretMessages extends SmartContract {
     )
     return cond1.and(cond2)
   }
+
+  @method storeMessage(
+    keyWitness: MerkleMapWitness,
+    keyToChange: Field,
+    messageBefore: Field,
+    messageAfterWFlags: Field,
+  ) {
+    const [flag1, flag2, flag3, flag4, flag5, flag6] = this.buildFlags(messageAfterWFlags);
+    const flagsOk: Bool = this.validateFlags(flag1, flag2, flag3, flag4, flag5, flag6)
+    flagsOk.assertTrue("Invalid flags!");
+
+    // Get rid of the bits
+    const messageAfter = Gadgets.rightShift(messageAfterWFlags, 6);
+
+    ////  Merkle Map update logic
+    const mapRoot = this.mapRoot.getAndRequireEquals();
+    // check the initial state matches what we expect
+    const [rootBefore, key] = keyWitness.computeRootAndKey(messageBefore);
+    rootBefore.assertEquals(mapRoot);
+    key.assertEquals(keyToChange);
+    // compute the root after updating
+    const [rootAfter, _] = keyWitness.computeRootAndKey(messageAfter);
+    this.mapRoot.set(rootAfter);
+  }
+
 }

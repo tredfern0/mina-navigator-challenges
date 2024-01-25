@@ -1,5 +1,5 @@
 import { SecretMessages } from './SecretMessages01';
-import { Field, Mina, PrivateKey, PublicKey, AccountUpdate, Bool } from 'o1js';
+import { Field, Mina, PrivateKey, PublicKey, AccountUpdate, Bool, MerkleMap, MerkleMapWitness } from 'o1js';
 
 
 let proofsEnabled = false;
@@ -85,7 +85,7 @@ describe('SecretMessages', () => {
     }
   })
 
-  it.only('correctly validates flags', async () => {
+  it('correctly validates flags', async () => {
     // Test each branch of this:
     // If flag 2 is true, then flag 3 must also be true.
     // If flag 4 is true, then flags 5 and 6 must be false.
@@ -125,4 +125,77 @@ describe('SecretMessages', () => {
   })
 
 
+  it('stores new addresses', async () => {
+    // TODO - need to test administrator access to this function
+    await localDeploy()
+
+    const pubKey = PrivateKey.random().toPublicKey()
+    console.log(pubKey)
+    console.log(pubKey.x)
+    console.log(pubKey.isOdd)
+    console.log(pubKey.toFields()[0])
+    console.log(pubKey.toFields()[1])
+
+    const address = PrivateKey.random().toPublicKey().toFields()[0];
+
+    const map = new MerkleMap();
+    // We'll indicate that the address is a valid one by adding to merkle map
+    // and initializing value to 0
+    map.set(address, Field(0));
+
+
+    const txnA = await Mina.transaction(deployerAccount, () => {
+      zkApp.storeAddress(address)
+    });
+    await txnA.prove();
+    await txnA.sign([deployerKey]).send();
+
+    const numAddresses = Number(zkApp.numAddresses.get().toBigInt()) as number;
+    expect(numAddresses).toEqual(1);
+    //const numAddresses = zkApp.numAddresses.get()
+    //expect(numAddresses).toEqual(1);
+
+
+  })
+
+
+  /*
+  // We need to be able to store messages via our map before this will work
+  it.only('stores new messages', async () => {
+    // TODO - need to test administrator access to this function
+    await localDeploy()
+
+    const secMessage: Field = Field(42);
+    const someAddress: PublicKey = PrivateKey.random().toPublicKey();
+    const map = new MerkleMap();
+
+    //map.set(someAddress.toFields()[0], secMessage);
+    map.set(Field(100), Field(50));
+
+    // const rootBefore = map.getRoot();
+    const key = Field(100);
+    const keyWitness: MerkleMapWitness = map.getWitness(key);
+    const keyToChange = Field(100);
+    const valueBefore = Field(50);
+    const incrementAmount = Field(8);
+
+    // keyWitness.computeRootAndKey(keyToChange, valueBefore, incrementAmount);0l
+
+    const txnA = await Mina.transaction(deployerAccount, () => {
+      zkApp.
+        storeMessage(keyWitness,
+          keyToChange,
+          valueBefore,
+          incrementAmount);
+    });
+    await txnA.prove();
+    await txnA.sign([deployerKey]).send();
+
+
+    // const numAddresses = Number(zkApp.numAddresses.get().toBigInt()) as number;
+    // expect(numAddresses).toEqual(1);
+    // const numAddresses = zkApp.numAddresses.get()
+    // expect(numAddresses).toEqual(1);
+  })
+  */
 });
