@@ -15,9 +15,8 @@ export class SecretMessages extends SmartContract {
   @state(UInt64) numAddresses = State<UInt64>();
   @state(UInt64) messagesReceived = State<UInt64>();
   @state(Field) mapRoot = State<Field>();
-
   events = {
-    "message-received": Field,
+    "message-received": UInt64,
   }
 
   init() {
@@ -30,7 +29,9 @@ export class SecretMessages extends SmartContract {
     this.mapRoot.set(map.getRoot());
   }
 
-  @method storeAddress(address: Field) {
+  @method storeAddress(address: Field,
+    keyWitness: MerkleMapWitness, // should be the keyWitness BEFORE the address has been set
+  ) {
     /*
     There will be a maximum of 100 eligible addresses.
     You need to write a function in a contract to store the
@@ -40,13 +41,22 @@ export class SecretMessages extends SmartContract {
     structure.
     */
 
-    // TODO - restrict access to administrator...
     const numAddresses = this.numAddresses.getAndRequireEquals();
     // if it's 99 we can still add one more, so LT 100 is correct condition
     numAddresses.assertLessThan(UInt64.from(100)), "Too many addresses";
 
     // Use a merkle map to store addresses
     this.numAddresses.set(numAddresses.add(1));
+
+    // Make sure this address wasn't already initialized
+    const mapRoot = this.mapRoot.getAndRequireEquals();
+    const [rootBefore, key] = keyWitness.computeRootAndKey(Field(0));
+    rootBefore.assertEquals(mapRoot);
+    key.assertEquals(address);
+
+    // Field(1) indicates that the address is valid and they can now add a message
+    const [rootAfter, _] = keyWitness.computeRootAndKey(Field(1));
+    this.mapRoot.set(rootAfter);
   }
 
   buildFlags(message: Field): [Bool, Bool, Bool, Bool, Bool, Bool] {
@@ -66,12 +76,13 @@ export class SecretMessages extends SmartContract {
     const bit2 = Field(16);   // ... 010000 = 16
     const bit1 = Field(32);   // ... 100000 = 32
 
-    const g6 = Gadgets.and(message, bit6, 1);    // ... 000001
-    const g5 = Gadgets.and(message, bit5, 2);    // ... 000010
-    const g4 = Gadgets.and(message, bit4, 3);    // ... 000100
-    const g3 = Gadgets.and(message, bit3, 4);    // ... 001000
-    const g2 = Gadgets.and(message, bit2, 5);    // ... 010000
-    const g1 = Gadgets.and(message, bit1, 6);    // ... 100000
+    // have to specify 64 bits or it tries to do 16 bits?
+    const g6 = Gadgets.and(message, bit6, 64);    // ... 000001
+    const g5 = Gadgets.and(message, bit5, 64);    // ... 000010
+    const g4 = Gadgets.and(message, bit4, 64);    // ... 000100
+    const g3 = Gadgets.and(message, bit3, 64);    // ... 001000
+    const g2 = Gadgets.and(message, bit2, 64);    // ... 010000
+    const g1 = Gadgets.and(message, bit1, 64);    // ... 100000
 
     const flag6: Bool = g6.equals(bit6);
     const flag5: Bool = g5.equals(bit5);
@@ -116,39 +127,38 @@ export class SecretMessages extends SmartContract {
 
   @method storeMessage(
     keyWitness: MerkleMapWitness,
-    keyToChange: Field,
-    messageBefore: Field,
-    messageAfterWFlags: Field,
+    address: Field,
+    messageCurrent: Field,
+    messageWFlags: Field,
   ) {
-    const [flag1, flag2, flag3, flag4, flag5, flag6] = this.buildFlags(messageAfterWFlags);
+    const [flag1, flag2, flag3, flag4, flag5, flag6] = this.buildFlags(messageWFlags);
     const flagsOk: Bool = this.validateFlags(flag1, flag2, flag3, flag4, flag5, flag6)
     flagsOk.assertTrue("Invalid flags!");
 
     // Get rid of the bits
-    const messageAfter = Gadgets.rightShift(messageAfterWFlags, 6);
+    const message = Gadgets.rightShift(messageWFlags, 6);
 
-    ////  Merkle Map update logic
+    // Before we insert it, make sure root matches
     const mapRoot = this.mapRoot.getAndRequireEquals();
-    // check the initial state matches what we expect
-    const [rootBefore, key] = keyWitness.computeRootAndKey(messageBefore);
-    rootBefore.assertEquals(mapRoot);
-    key.assertEquals(keyToChange);
-    // compute the root after updating
-    const [rootAfter, _] = keyWitness.computeRootAndKey(messageAfter);
-    this.mapRoot.set(rootAfter);
+    const [rootCurrent, key] = keyWitness.computeRootAndKey(messageCurrent);
+    rootCurrent.assertEquals(mapRoot);
+    key.assertEquals(address);
 
+    // Now we can update the message
+    const [rootNew, _] = keyWitness.computeRootAndKey(message);
+    this.mapRoot.set(rootNew);
 
     const messagesReceived = this.messagesReceived.getAndRequireEquals();
-    // If the value in the merkle map was previously 0, this is the first message 
+    // If the value in the merkle map was previously 1, this is the first message 
     // the user has stored and we should increment the counter
     // Otherwise the user is overwriting their previous message so we should
     // not increment the counter
-    const messagesReceivedTot = Provable.if(messageBefore.equals(Field(0)),
+    const messagesReceivedTot = Provable.if(messageCurrent.equals(Field(1)),
       messagesReceived.add(1),
       messagesReceived
     )
-    this.messagesReceived.set(messagesReceivedTot);
 
+    this.messagesReceived.set(messagesReceivedTot);
     this.emitEvent("message-received", messagesReceivedTot);
   }
 

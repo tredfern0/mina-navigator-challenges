@@ -1,5 +1,5 @@
 import { SecretMessages, appendFlags } from './SecretMessages01';
-import { Field, Mina, PrivateKey, PublicKey, AccountUpdate, Bool, MerkleMap, MerkleMapWitness, Gadgets } from 'o1js';
+import { Field, Mina, PrivateKey, PublicKey, AccountUpdate, Bool, MerkleMap, MerkleMapWitness, Gadgets, UInt32 } from 'o1js';
 
 
 let proofsEnabled = false;
@@ -7,8 +7,12 @@ let proofsEnabled = false;
 describe('SecretMessages', () => {
   let deployerAccount: PublicKey,
     deployerKey: PrivateKey,
-    senderAccount: PublicKey,
-    senderKey: PrivateKey,
+    // this will be the account of the admin - person who can access contract
+    adminAccount: PublicKey,
+    adminKey: PrivateKey,
+    // this will be a separate account that should not be able to access contract
+    outsiderAccount: PublicKey,
+    outsiderKey: PrivateKey,
     zkAppAddress: PublicKey,
     zkAppPrivateKey: PrivateKey,
     zkApp: SecretMessages;
@@ -22,8 +26,10 @@ describe('SecretMessages', () => {
     Mina.setActiveInstance(Local);
     ({ privateKey: deployerKey, publicKey: deployerAccount } =
       Local.testAccounts[0]);
-    ({ privateKey: senderKey, publicKey: senderAccount } =
+    ({ privateKey: adminKey, publicKey: adminAccount } =
       Local.testAccounts[1]);
+    ({ privateKey: outsiderKey, publicKey: outsiderAccount } =
+      Local.testAccounts[2]);
     zkAppPrivateKey = PrivateKey.random();
     zkAppAddress = zkAppPrivateKey.toPublicKey();
     zkApp = new SecretMessages(zkAppAddress);
@@ -125,78 +131,40 @@ describe('SecretMessages', () => {
   })
 
 
-  it('stores new addresses', async () => {
-    // TODO - need to test administrator access to this function
+  it('storeAddress() stores new addresses', async () => {
     await localDeploy()
-
-    const pubKey = PrivateKey.random().toPublicKey()
-    console.log(pubKey)
-    console.log(pubKey.x)
-    console.log(pubKey.isOdd)
-    console.log(pubKey.toFields()[0])
-    console.log(pubKey.toFields()[1])
 
     const address = PrivateKey.random().toPublicKey().toFields()[0];
 
     const map = new MerkleMap();
-    // We'll indicate that the address is a valid one by adding to merkle map
-    // and initializing value to 0
-    map.set(address, Field(0));
+    const keyWitness: MerkleMapWitness = map.getWitness(address);
+    map.set(address, Field(1));
 
     const txnA = await Mina.transaction(deployerAccount, () => {
-      zkApp.storeAddress(address)
+      zkApp.storeAddress(address, keyWitness)
     });
     await txnA.prove();
     await txnA.sign([deployerKey]).send();
 
     const numAddresses = Number(zkApp.numAddresses.get().toBigInt()) as number;
+    // Roots should match and we should have stored one address
     expect(numAddresses).toEqual(1);
-    //const numAddresses = zkApp.numAddresses.get()
-    //expect(numAddresses).toEqual(1);
+    expect(zkApp.mapRoot.get()).toEqual(map.getRoot())
 
+    // And confirm if we try to store the same address again, it fails
+    let failed = false;
+    try {
+      const txnB = await Mina.transaction(deployerAccount, () => {
+        zkApp.storeAddress(address, keyWitness)
+      });
+      await txnB.prove();
+      await txnB.sign([deployerKey]).send();
 
+    } catch (e: any) {
+      failed = true;
+    }
+    expect(failed).toBeTruthy()
   })
-
-
-  /*
-  // We need to be able to store messages via our map before this will work
-  it.only('stores new messages', async () => {
-    // TODO - need to test administrator access to this function
-    await localDeploy()
-
-    const secMessage: Field = Field(42);
-    const someAddress: PublicKey = PrivateKey.random().toPublicKey();
-    const map = new MerkleMap();
-
-    //map.set(someAddress.toFields()[0], secMessage);
-    map.set(Field(100), Field(50));
-
-    // const rootBefore = map.getRoot();
-    const key = Field(100);
-    const keyWitness: MerkleMapWitness = map.getWitness(key);
-    const keyToChange = Field(100);
-    const valueBefore = Field(50);
-    const incrementAmount = Field(8);
-
-    // keyWitness.computeRootAndKey(keyToChange, valueBefore, incrementAmount);0l
-
-    const txnA = await Mina.transaction(deployerAccount, () => {
-      zkApp.
-        storeMessage(keyWitness,
-          keyToChange,
-          valueBefore,
-          incrementAmount);
-    });
-    await txnA.prove();
-    await txnA.sign([deployerKey]).send();
-
-
-    // const numAddresses = Number(zkApp.numAddresses.get().toBigInt()) as number;
-    // expect(numAddresses).toEqual(1);
-    // const numAddresses = zkApp.numAddresses.get()
-    // expect(numAddresses).toEqual(1);
-  })
-  */
 
   it('properly appends flags', async () => {
     // make sure round trips are good, and make sure if we have a message
@@ -210,14 +178,90 @@ describe('SecretMessages', () => {
   })
 
 
-  it.only('wont append flags to oversized message', async () => {
+  it('wont append flags to oversized message', async () => {
     const message = Field(2 ** 64 - 1);
     const flags = Field(0b001100);
+    let failed = false;
     try {
-      const messageWFlags = appendFlags(message, flags);
+      appendFlags(message, flags);
     } catch (e: any) {
+      failed = true;
     }
+    expect(failed).toBeTruthy()
+  })
 
+
+  it.only('storeMessage() stores new messages', async () => {
+    // Note - this is somewhat of an integration test as it relies on 
+    // flagg appending and storeAddress to work
+    await localDeploy()
+
+    // Need to add it to the map first
+    const address = PrivateKey.random().toPublicKey().toFields()[0];
+    const map = new MerkleMap();
+    let keyWitness: MerkleMapWitness = map.getWitness(address);
+    map.set(address, Field(1));
+    const txnA = await Mina.transaction(deployerAccount, () => {
+      zkApp.storeAddress(address, keyWitness)
+    });
+    await txnA.prove();
+    await txnA.sign([deployerKey]).send();
+
+    // Part 1 - add an initial message, make sure it worked
+    const message = Field(123456);
+    // setting all flags to false will pass checks
+    const flags = Field(0b000000);
+    keyWitness = map.getWitness(address);
+    let messageCurrent = Field(1);
+    let messageWFlags: Field = appendFlags(message, flags)
+
+    const txnB = await Mina.transaction(deployerAccount, () => {
+      zkApp.
+        storeMessage(
+          keyWitness,
+          address,
+          messageCurrent,
+          messageWFlags)
+    });
+    await txnB.prove();
+    await txnB.sign([deployerKey]).send();
+
+    map.set(address, message);
+
+    // Make sure we've now received 1 message and roots match
+    let messagesReceived = Number(zkApp.messagesReceived.get().toBigInt()) as number;
+    expect(messagesReceived).toEqual(1);
+    expect(zkApp.mapRoot.get()).toEqual(map.getRoot())
+
+    // Part 2 - update message
+    const messageNew = Field(7891011);
+    // setting all flags to false will pass checks
+    keyWitness = map.getWitness(address);
+    messageCurrent = message;
+    messageWFlags = appendFlags(messageNew, flags)
+
+    const txnC = await Mina.transaction(deployerAccount, () => {
+      zkApp.
+        storeMessage(
+          keyWitness,
+          address,
+          messageCurrent,
+          messageWFlags)
+    });
+    await txnC.prove();
+    await txnC.sign([deployerKey]).send();
+
+    map.set(address, messageNew);
+
+    // Should STILL be 1 message received, and roots should match
+    messagesReceived = Number(zkApp.messagesReceived.get().toBigInt()) as number;
+    expect(messagesReceived).toEqual(1);
+    expect(zkApp.mapRoot.get()).toEqual(map.getRoot())
+
+
+    // TODO - add test for events?
+    // const events = await zkApp.fetchEvents(UInt32.from(0));
+    // console.log(events)
   })
 
 
