@@ -1,3 +1,3 @@
-import { Add } from './Add.js';
+import { SecretMessages } from './SecretMessages01.js';
 
-export { Add };
+export { SecretMessages };
