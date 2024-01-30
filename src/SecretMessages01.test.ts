@@ -143,7 +143,7 @@ describe('SecretMessages', () => {
     const address = PrivateKey.random().toPublicKey().toFields()[0];
 
     const map = new MerkleMap();
-    const keyWitness: MerkleMapWitness = map.getWitness(address);
+    let keyWitness: MerkleMapWitness = map.getWitness(address);
     map.set(address, Field(1));
 
     const txnA = await Mina.transaction(adminAccount, () => {
@@ -197,7 +197,7 @@ describe('SecretMessages', () => {
   })
 
 
-  it.only('storeMessage() stores new messages', async () => {
+  it('storeMessage() stores new messages', async () => {
     // Note - this is somewhat of an integration test as it relies on 
     // flagg appending and storeAddress to work
     await localDeploy()
@@ -265,11 +265,213 @@ describe('SecretMessages', () => {
     messagesReceived = Number(zkApp.messagesReceived.get().toBigInt()) as number;
     expect(messagesReceived).toEqual(1);
     expect(zkApp.mapRoot.get()).toEqual(map.getRoot())
+  })
 
 
-    // TODO - add test for events?
-    // const events = await zkApp.fetchEvents(UInt32.from(0));
-    // console.log(events)
+  it('only allows admin access', async () => {
+    // Make sure none of the three methods can be called by non-admin
+    // Mostly a copy of above test, just also trying each method with non-admin first
+    await localDeploy()
+
+    // 1a. Calling 'storeAddress' with non-admin should fail
+    const address = PrivateKey.random().toPublicKey().toFields()[0];
+    const map = new MerkleMap();
+    let keyWitness: MerkleMapWitness = map.getWitness(address);
+    map.set(address, Field(1));
+
+    let failed = false;
+    try {
+      const txnAf = await Mina.transaction(outsiderAccount, () => {
+        zkApp.storeAddress(outsiderKey, address, keyWitness)
+      });
+      await txnAf.prove();
+      await txnAf.sign([outsiderKey]).send();
+
+    } catch (e: any) {
+      failed = true;
+    }
+    expect(failed).toBeTruthy()
+
+    // 1b. But with admin will succeed
+    const txnA = await Mina.transaction(adminAccount, () => {
+      zkApp.storeAddress(adminKey, address, keyWitness)
+    });
+    await txnA.prove();
+    await txnA.sign([adminKey]).send();
+
+
+    // Part 2a. Calling 'storeMessage' with non-admin should fail
+    const message = Field(123456);
+    // setting all flags to false will pass checks
+    const flags = Field(0b000000);
+    keyWitness = map.getWitness(address);
+    let messageCurrent = Field(1);
+    let messageWFlags: Field = appendFlags(message, flags)
+
+
+    failed = false;
+    try {
+      const txnBf = await Mina.transaction(outsiderAccount, () => {
+        zkApp.
+          storeMessage(
+            outsiderKey,
+            keyWitness,
+            address,
+            messageCurrent,
+            messageWFlags)
+      });
+      await txnBf.prove();
+      await txnBf.sign([outsiderKey]).send();
+
+    } catch (e: any) {
+      failed = true;
+    }
+    expect(failed).toBeTruthy()
+
+
+    const txnB = await Mina.transaction(adminAccount, () => {
+      zkApp.
+        storeMessage(
+          adminKey,
+          keyWitness,
+          address,
+          messageCurrent,
+          messageWFlags)
+    });
+    await txnB.prove();
+    await txnB.sign([adminKey]).send();
+
+    // And just check state has changed
+    map.set(address, message);
+
+    // Make sure we've now received 1 message and roots match
+    let messagesReceived = Number(zkApp.messagesReceived.get().toBigInt()) as number;
+    expect(messagesReceived).toEqual(1);
+    expect(zkApp.mapRoot.get()).toEqual(map.getRoot())
+  })
+
+
+
+  it.only('integrates all functionality together', async () => {
+    // integration test - add+update multiple addresses, make sure it all works
+    await localDeploy()
+
+    // Add three addresses, and then set messages for two of them
+    const address1 = PrivateKey.random().toPublicKey().toFields()[0];
+    const address2 = PrivateKey.random().toPublicKey().toFields()[0];
+    const address3 = PrivateKey.random().toPublicKey().toFields()[0];
+    const addresses = [address1, address2, address3]
+
+    const map = new MerkleMap();
+
+    for (let address of addresses) {
+      let keyWitness: MerkleMapWitness = map.getWitness(address);
+      map.set(address, Field(1));
+      const txn = await Mina.transaction(adminAccount, () => {
+        zkApp.storeAddress(adminKey, address, keyWitness)
+      });
+      await txn.prove();
+      await txn.sign([adminKey]).send();
+    }
+
+    // At this point we should have 3 addresses
+    const numAddresses = Number(zkApp.numAddresses.get().toBigInt()) as number;
+    expect(numAddresses).toEqual(3);
+    expect(zkApp.mapRoot.get()).toEqual(map.getRoot())
+
+
+    // First add messages for two of the three
+    const message1 = Field(88372);
+    const message2 = Field(539911);
+    const message3 = Field(94844);
+
+    const flagsValid = Field(0b000000);
+    let keyWitness = map.getWitness(address1);
+    let messageCurrent = Field(1);
+    let messageWFlags = appendFlags(message1, flagsValid)
+    map.set(address1, message1);
+
+    const txnB = await Mina.transaction(adminAccount, () => {
+      zkApp.
+        storeMessage(
+          adminKey,
+          keyWitness,
+          address1,
+          messageCurrent,
+          messageWFlags)
+    });
+    await txnB.prove();
+    await txnB.sign([adminKey]).send();
+
+
+    keyWitness = map.getWitness(address2);
+    messageCurrent = Field(1);
+    messageWFlags = appendFlags(message2, flagsValid)
+    map.set(address2, message2);
+
+    const txnC = await Mina.transaction(adminAccount, () => {
+      zkApp.
+        storeMessage(
+          adminKey,
+          keyWitness,
+          address2,
+          messageCurrent,
+          messageWFlags)
+    });
+    await txnC.prove();
+    await txnC.sign([adminKey]).send();
+
+
+    // Trying to add a message with invalid bits should fail
+    const flagsInvalid = Field(0b010000);
+    keyWitness = map.getWitness(address3);
+    messageCurrent = Field(1);
+    messageWFlags = appendFlags(message3, flagsInvalid)
+    // map.set(address3, message3);  Do NOT set - shouldn't work
+
+    let failed = false;
+    try {
+      const txnD = await Mina.transaction(adminAccount, () => {
+        zkApp.
+          storeMessage(
+            adminKey,
+            keyWitness,
+            address3,
+            messageCurrent,
+            messageWFlags)
+      });
+      await txnD.prove();
+      await txnD.sign([adminKey]).send();
+    } catch (e: any) {
+      failed = true;
+    }
+    expect(failed).toBeTruthy()
+
+
+    // And updating a message should succeed
+    // First add messages for two of the three
+    const message1New = Field(4444123);
+    keyWitness = map.getWitness(address1);
+    messageCurrent = message1;
+    messageWFlags = appendFlags(message1New, flagsValid)
+    map.set(address1, message1New);
+
+    const txnE = await Mina.transaction(adminAccount, () => {
+      zkApp.
+        storeMessage(
+          adminKey,
+          keyWitness,
+          address1,
+          messageCurrent,
+          messageWFlags)
+    });
+    await txnE.prove();
+    await txnE.sign([adminKey]).send();
+
+    // At this point we should have matching roots and 2 messages received
+    let messagesReceived = Number(zkApp.messagesReceived.get().toBigInt()) as number;
+    expect(messagesReceived).toEqual(2);
+    expect(zkApp.mapRoot.get()).toEqual(map.getRoot())
   })
 
 });
