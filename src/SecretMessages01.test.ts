@@ -43,6 +43,12 @@ describe('SecretMessages', () => {
     await txn.prove();
     // this tx needs .sign(), because `deploy()` adds an account update that requires signature authorization
     await txn.sign([deployerKey, zkAppPrivateKey]).send();
+
+    const txnB = await Mina.transaction(deployerAccount, () => {
+      zkApp.setAdmin(adminKey)
+    });
+    await txnB.prove();
+    await txnB.sign([deployerKey]).send();
   }
 
   it('correctly builds flags', async () => {
@@ -140,11 +146,11 @@ describe('SecretMessages', () => {
     const keyWitness: MerkleMapWitness = map.getWitness(address);
     map.set(address, Field(1));
 
-    const txnA = await Mina.transaction(deployerAccount, () => {
-      zkApp.storeAddress(address, keyWitness)
+    const txnA = await Mina.transaction(adminAccount, () => {
+      zkApp.storeAddress(adminKey, address, keyWitness)
     });
     await txnA.prove();
-    await txnA.sign([deployerKey]).send();
+    await txnA.sign([adminKey]).send();
 
     const numAddresses = Number(zkApp.numAddresses.get().toBigInt()) as number;
     // Roots should match and we should have stored one address
@@ -154,11 +160,11 @@ describe('SecretMessages', () => {
     // And confirm if we try to store the same address again, it fails
     let failed = false;
     try {
-      const txnB = await Mina.transaction(deployerAccount, () => {
-        zkApp.storeAddress(address, keyWitness)
+      const txnB = await Mina.transaction(adminAccount, () => {
+        zkApp.storeAddress(adminKey, address, keyWitness)
       });
       await txnB.prove();
-      await txnB.sign([deployerKey]).send();
+      await txnB.sign([adminKey]).send();
 
     } catch (e: any) {
       failed = true;
@@ -201,11 +207,11 @@ describe('SecretMessages', () => {
     const map = new MerkleMap();
     let keyWitness: MerkleMapWitness = map.getWitness(address);
     map.set(address, Field(1));
-    const txnA = await Mina.transaction(deployerAccount, () => {
-      zkApp.storeAddress(address, keyWitness)
+    const txnA = await Mina.transaction(adminAccount, () => {
+      zkApp.storeAddress(adminKey, address, keyWitness)
     });
     await txnA.prove();
-    await txnA.sign([deployerKey]).send();
+    await txnA.sign([adminKey]).send();
 
     // Part 1 - add an initial message, make sure it worked
     const message = Field(123456);
@@ -215,16 +221,17 @@ describe('SecretMessages', () => {
     let messageCurrent = Field(1);
     let messageWFlags: Field = appendFlags(message, flags)
 
-    const txnB = await Mina.transaction(deployerAccount, () => {
+    const txnB = await Mina.transaction(adminAccount, () => {
       zkApp.
         storeMessage(
+          adminKey,
           keyWitness,
           address,
           messageCurrent,
           messageWFlags)
     });
     await txnB.prove();
-    await txnB.sign([deployerKey]).send();
+    await txnB.sign([adminKey]).send();
 
     map.set(address, message);
 
@@ -240,16 +247,17 @@ describe('SecretMessages', () => {
     messageCurrent = message;
     messageWFlags = appendFlags(messageNew, flags)
 
-    const txnC = await Mina.transaction(deployerAccount, () => {
+    const txnC = await Mina.transaction(adminAccount, () => {
       zkApp.
         storeMessage(
+          adminKey,
           keyWitness,
           address,
           messageCurrent,
           messageWFlags)
     });
     await txnC.prove();
-    await txnC.sign([deployerKey]).send();
+    await txnC.sign([adminKey]).send();
 
     map.set(address, messageNew);
 
@@ -263,6 +271,5 @@ describe('SecretMessages', () => {
     // const events = await zkApp.fetchEvents(UInt32.from(0));
     // console.log(events)
   })
-
 
 });

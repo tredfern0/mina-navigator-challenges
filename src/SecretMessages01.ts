@@ -1,4 +1,4 @@
-import { Field, Gadgets, SmartContract, state, State, method, Bool, Provable, UInt64, PublicKey, PrivateKey, MerkleMapWitness, MerkleMap } from 'o1js';
+import { Field, Gadgets, SmartContract, state, State, method, Bool, Provable, UInt64, PublicKey, PrivateKey, MerkleMapWitness, MerkleMap, Poseidon } from 'o1js';
 
 
 // Helper function for appending bits to message
@@ -15,6 +15,8 @@ export class SecretMessages extends SmartContract {
   @state(UInt64) numAddresses = State<UInt64>();
   @state(UInt64) messagesReceived = State<UInt64>();
   @state(Field) mapRoot = State<Field>();
+  @state(Field) adminHash = State<Field>();
+
   events = {
     "message-received": UInt64,
   }
@@ -23,13 +25,29 @@ export class SecretMessages extends SmartContract {
     super.init();
     this.messagesReceived.set(UInt64.from(0));
     this.numAddresses.set(UInt64.from(0));
+    this.adminHash.set(Field(0));
 
     // Initialize empty map to store addresses
     const map = new MerkleMap();
     this.mapRoot.set(map.getRoot());
   }
 
-  @method storeAddress(address: Field,
+  getPKeyHash(pKey: PrivateKey): Field {
+    return Poseidon.hash(pKey.toPublicKey().toFields());
+  }
+
+  @method setAdmin(pKey: PrivateKey) {
+    // If it's anything besides 0 it was already set
+    const adminHash = this.adminHash.getAndRequireEquals();
+    adminHash.assertEquals(Field(0)), "Admin already set";
+    // needs to be called immediately after init to set the admin
+    const adminHashWrite: Field = this.getPKeyHash(pKey)
+    this.adminHash.set(adminHashWrite)
+  }
+
+
+  @method storeAddress(pKey: PrivateKey,
+    address: Field,
     keyWitness: MerkleMapWitness, // should be the keyWitness BEFORE the address has been set
   ) {
     /*
@@ -40,6 +58,9 @@ export class SecretMessages extends SmartContract {
     Eligible addresses should be stored in a suitable data
     structure.
     */
+    const adminHash = this.adminHash.getAndRequireEquals();
+    adminHash.assertNotEquals(Field(0)), "Admin not set";
+    adminHash.assertEquals(this.getPKeyHash(pKey)), "Wrong admin key";
 
     const numAddresses = this.numAddresses.getAndRequireEquals();
     // if it's 99 we can still add one more, so LT 100 is correct condition
@@ -126,11 +147,16 @@ export class SecretMessages extends SmartContract {
   }
 
   @method storeMessage(
+    pKey: PrivateKey,
     keyWitness: MerkleMapWitness,
     address: Field,
     messageCurrent: Field,
     messageWFlags: Field,
   ) {
+    const adminHash = this.adminHash.getAndRequireEquals();
+    adminHash.assertNotEquals(Field(0)), "Admin not set";
+    adminHash.assertEquals(this.getPKeyHash(pKey)), "Wrong admin key";
+
     const [flag1, flag2, flag3, flag4, flag5, flag6] = this.buildFlags(messageWFlags);
     const flagsOk: Bool = this.validateFlags(flag1, flag2, flag3, flag4, flag5, flag6)
     flagsOk.assertTrue("Invalid flags!");
