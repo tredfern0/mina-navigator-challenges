@@ -352,7 +352,7 @@ describe('SecretMessages', () => {
 
 
 
-  it.only('integrates all functionality together', async () => {
+  it('integrates all functionality together', async () => {
     // integration test - add+update multiple addresses, make sure it all works
     await localDeploy()
 
