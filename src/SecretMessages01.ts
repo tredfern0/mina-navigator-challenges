@@ -157,6 +157,9 @@ export class SecretMessages extends SmartContract {
     adminHash.assertNotEquals(Field(0)), "Admin not set";
     adminHash.assertEquals(this.getPKeyHash(pKey)), "Wrong admin key";
 
+    // If we have a witness with current value 0, the address is not in the map
+    messageCurrent.assertNotEquals(Field(0)), "Invalid address";
+
     const [flag1, flag2, flag3, flag4, flag5, flag6] = this.buildFlags(messageWFlags);
     const flagsOk: Bool = this.validateFlags(flag1, flag2, flag3, flag4, flag5, flag6)
     flagsOk.assertTrue("Invalid flags!");
