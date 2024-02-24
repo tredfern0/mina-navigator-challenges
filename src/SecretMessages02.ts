@@ -10,20 +10,19 @@ export class SecretMessage extends Struct({ messageNumber: UInt64, agentId: Fiel
 export class PublicMessage extends Struct({ isValid: Bool, messageNumber: UInt64 }) { }
 
 
-// 2. This program is needed to run on low spec hardware so you need to find a way to process the batch so that the circuit size remains low.
-
 export class BatchMessages extends SmartContract {
     // Highest message number received...
     @state(UInt64) messageNumber = State<UInt64>();
     // Store the action state so we can efficiently filter out the actions that have already been processed
     @state(Field) actionState = State<Field>();
 
-    // reducer = Reducer({ actionType: SecretMessage });
     reducer = Reducer({ actionType: PublicMessage });
 
     init() {
         super.init();
         this.messageNumber.set(UInt64.from(0));
+        // Initialize with initialActionState so we can always filter based on this param
+        this.actionState.set(Reducer.initialActionState);
     }
 
     @method dispatchIfValid(message: SecretMessage, prevMessageNumber: UInt64) {
@@ -36,7 +35,7 @@ export class BatchMessages extends SmartContract {
         // this means that this is a duplicate message.  
         // In this case it still should be processed but the message details 
         // do not need to be checked.
-        const messageNew = message.messageNumber.greaterThan(prevMessageNumber);
+        const duplicateMessage = message.messageNumber.greaterThan(prevMessageNumber).not();
         // If Agent ID is zero we don't need to check the other values, but this is still a valid message
         const agent0 = message.agentId.equals(0);
 
@@ -44,10 +43,10 @@ export class BatchMessages extends SmartContract {
         const check2 = this.rangeCheck(message.agentId, message.agentXLocation, message.agentYLocation);
         const checksOk: Bool = check1.and(check2);
 
-        // agent0 or messageNew = automatic approval
+        // agent0 or duplicateMessage = automatic approval
         // If both of those are false, then checksOk must be true
-        // So condition is: messageNew OR agent0 OR checksOk
-        const wasValid = agent0.or(messageNew).or(checksOk);
+        // So condition is: duplicateMessage OR agent0 OR checksOk
+        const wasValid = agent0.or(duplicateMessage).or(checksOk);
         return wasValid;
     }
 
@@ -72,6 +71,14 @@ export class BatchMessages extends SmartContract {
     }
 
     @method runReduce(splitBatch: Bool) {
+        // In order to satisfy this condition:
+        // --- This program is needed to run on low spec hardware so you need to find a 
+        // --- way to process the batch so that the circuit size remains low.
+        // We have the functionality to subdivide a batch while still processing
+        // it as a single batch, which will keep circuit size low.
+        // This only difference is that if 'splitBatch' is true, we need to
+        // continue on from the previously committed messageNumber.
+        // If it's false, we start from 0.
 
         const actionState = this.actionState.getAndRequireEquals();
 
@@ -80,22 +87,25 @@ export class BatchMessages extends SmartContract {
         // committed message number!
         // So setting initial state to be 0, lowest possible message number
         // and then processing all messages in the batch
-        // So we will not event get messageNumber - we'll just overwrite it
-        // const messageNumber = this.messageNumber.getAndRequireEquals();
 
         const pendingActions = this.reducer.getActions({
             fromActionState: actionState,
         });
 
+        // So if it's a split batch - it means we need to continue on from the
+        // previously committed messageNumber.
+        // Otherwise start from 0.
+        const messageNumber = this.messageNumber.getAndRequireEquals();
+        const startMessageNumber: UInt64 = Provable.if(splitBatch, messageNumber, UInt64.from(0))
+
         const initial = {
-            state: UInt64.from(0),
-            // TODO - understand what exactly this is...
-            actionState: Reducer.initialActionState,
+            state: startMessageNumber,
+            actionState: actionState,
         }
 
         let { state: newMessage, actionState: newActionState } = this.reducer.reduce(
             pendingActions,
-            // state type
+            // state type we're aggregating over - we just want the max messageNumber, which is UInt64
             UInt64,
             // function that says how to apply an action
             (state: UInt64, action: PublicMessage) => {
@@ -107,7 +117,7 @@ export class BatchMessages extends SmartContract {
             initial
         );
 
-        this.messageNumber.set(newMessage.messageNumber);
+        this.messageNumber.set(newMessage);
         this.actionState.set(newActionState);
     }
 }
