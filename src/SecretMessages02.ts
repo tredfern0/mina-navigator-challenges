@@ -1,4 +1,4 @@
-import { Field, Reducer, Struct, SmartContract, state, State, method, Bool, Provable, UInt64 } from 'o1js';
+import { Mina, Field, Reducer, Struct, SmartContract, state, State, method, Bool, Provable, UInt64, PrivateKey, PublicKey, Poseidon } from 'o1js';
 
 // SecretMessage will be the input to the contract. In order to satisfy this condition:
 // "The message details should be private inputs."
@@ -9,12 +9,61 @@ export class SecretMessage extends Struct({ messageNumber: UInt64, agentId: Fiel
 // This will be the format of the message saved for the reducer to process
 export class PublicMessage extends Struct({ isValid: Bool, messageNumber: UInt64 }) { }
 
+// Helper function for processing batch of messages
+export async function processBatch(batch: SecretMessage[],
+    batchLimit: number,
+    zkApp: BatchMessages,
+    adminAccount: PublicKey,
+    adminKey: PrivateKey) {
+    // batchLimit is a parameter to subdivide the batch in order to allow
+    // for running on low spec hardware
+
+    let prevMessageNumber: UInt64 = UInt64.from(0);
+    let counter = 0;
+    let splitBatch = Bool(false);
+
+    for (const message of batch) {
+        const txn = await Mina.transaction(adminAccount, () => {
+            zkApp.dispatchIfValid(adminKey, message, prevMessageNumber)
+        });
+        await txn.prove();
+        await txn.sign([adminKey]).send();
+        counter += 1
+
+        prevMessageNumber = message.messageNumber;
+
+        // Repeatedly reduce whenever we exceed batchLimit
+        if (counter >= batchLimit) {
+            const txn = await Mina.transaction(adminAccount, () => {
+                zkApp.runReduce(adminKey, splitBatch)
+            });
+            await txn.prove();
+            await txn.sign([adminKey]).send();
+            // After the FIRST time we runReduce, we need to run with runReduce
+            // the rest of the time...
+            splitBatch = Bool(true);
+            // And reset counter...
+            counter = 0;
+        }
+    }
+
+    // Edge case would be we runReduce due to batch limit and have no other transactions
+    if (counter > 0) {
+        const txn = await Mina.transaction(adminAccount, () => {
+            zkApp.runReduce(adminKey, splitBatch)
+        });
+        await txn.prove();
+        await txn.sign([adminKey]).send();
+    }
+}
+
 
 export class BatchMessages extends SmartContract {
     // Highest message number received...
     @state(UInt64) messageNumber = State<UInt64>();
     // Store the action state so we can efficiently filter out the actions that have already been processed
     @state(Field) actionState = State<Field>();
+    @state(Field) adminHash = State<Field>();
 
     reducer = Reducer({ actionType: PublicMessage });
 
@@ -25,12 +74,33 @@ export class BatchMessages extends SmartContract {
         this.actionState.set(Reducer.initialActionState);
     }
 
-    @method dispatchIfValid(message: SecretMessage, prevMessageNumber: UInt64) {
+    getPKeyHash(pKey: PrivateKey): Field {
+        return Poseidon.hash(pKey.toPublicKey().toFields());
+    }
+
+    // Not explicitly a part of the instructions but seems like we'd want to restrict access to admit
+    @method setAdmin(pKey: PrivateKey) {
+        // If it's anything besides 0 it was already set
+        const adminHash = this.adminHash.getAndRequireEquals();
+        adminHash.assertEquals(Field(0)), "Admin already set";
+        // needs to be called immediately after init to set the admin
+        const adminHashWrite: Field = this.getPKeyHash(pKey)
+        this.adminHash.set(adminHashWrite)
+    }
+
+    @method dispatchIfValid(pKey: PrivateKey, message: SecretMessage, prevMessageNumber: UInt64) {
+        // Admin check...
+        const adminHash = this.adminHash.getAndRequireEquals();
+        adminHash.assertNotEquals(Field(0)), "Admin not set";
+        adminHash.assertEquals(this.getPKeyHash(pKey)), "Wrong admin key";
+
+
         const validBool = this.isValid(message, prevMessageNumber);
         this.reducer.dispatch({ isValid: validBool, messageNumber: message.messageNumber });
     }
 
     isValid(message: SecretMessage, prevMessageNumber: UInt64): Bool {
+
         // In case the message number is not greater than the previous one, 
         // this means that this is a duplicate message.  
         // In this case it still should be processed but the message details 
@@ -70,7 +140,12 @@ export class BatchMessages extends SmartContract {
         return checkSum.equals(checkSumExpected);
     }
 
-    @method runReduce(splitBatch: Bool) {
+    @method runReduce(pKey: PrivateKey, splitBatch: Bool) {
+        // Admin check...
+        const adminHash = this.adminHash.getAndRequireEquals();
+        adminHash.assertNotEquals(Field(0)), "Admin not set";
+        adminHash.assertEquals(this.getPKeyHash(pKey)), "Wrong admin key";
+
         // In order to satisfy this condition:
         // --- This program is needed to run on low spec hardware so you need to find a 
         // --- way to process the batch so that the circuit size remains low.

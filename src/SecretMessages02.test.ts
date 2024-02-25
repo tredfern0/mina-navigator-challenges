@@ -1,7 +1,28 @@
-import { BatchMessages, SecretMessage } from './SecretMessages02';
-import { Field, Mina, PrivateKey, PublicKey, AccountUpdate, UInt64, Bool, MerkleMap, MerkleMapWitness, Gadgets, UInt32 } from 'o1js';
+import { BatchMessages, SecretMessage, processBatch } from './SecretMessages02';
+import { Field, Mina, PrivateKey, PublicKey, AccountUpdate, UInt64, Bool } from 'o1js';
 
 let proofsEnabled = false;
+
+
+function buildBatch(maxMessageNum: number, numMessages: number) {
+    // Create a batch in which the max messageNumber is 'maxMessageNum'
+    let batch: SecretMessage[] = [];
+    // Make it so final message is 'maxMessageNum'
+    const startI = maxMessageNum - numMessages;
+    for (let i = startI; i <= maxMessageNum; i++) {
+        const message: SecretMessage = {
+            messageNumber: UInt64.from(i),
+            agentId: Field(100),
+            agentXLocation: Field(123),
+            agentYLocation: Field(5345),
+            checkSum: Field(5568),
+        }
+        batch.push(message)
+    }
+    return batch;
+}
+
+
 
 describe('SecretMessages02', () => {
     let deployerAccount: PublicKey,
@@ -37,6 +58,12 @@ describe('SecretMessages02', () => {
         await txn.prove();
         // this tx needs .sign(), because `deploy()` adds an account update that requires signature authorization
         await txn.sign([deployerKey, zkAppPrivateKey]).send();
+
+        const txnB = await Mina.transaction(deployerAccount, () => {
+            zkApp.setAdmin(adminKey)
+        });
+        await txnB.prove();
+        await txnB.sign([deployerKey]).send();
     }
 
     it('checks range values with rangeCheck()', async () => {
@@ -166,13 +193,13 @@ describe('SecretMessages02', () => {
         }
 
         const txn0 = await Mina.transaction(adminAccount, () => {
-            zkApp.dispatchIfValid(messageValid, prevMessageNumber)
+            zkApp.dispatchIfValid(adminKey, messageValid, prevMessageNumber)
         });
         await txn0.prove();
         await txn0.sign([adminKey]).send();
 
         const txn1 = await Mina.transaction(adminAccount, () => {
-            zkApp.dispatchIfValid(messageInvalid, prevMessageNumber)
+            zkApp.dispatchIfValid(adminKey, messageInvalid, prevMessageNumber)
         });
         await txn1.prove();
         await txn1.sign([adminKey]).send();
@@ -188,7 +215,7 @@ describe('SecretMessages02', () => {
         expect(pa1.messageNumber).toEqual(UInt64.from(24));
     })
 
-    it.only('reduces batch with runReduce()', async () => {
+    it('reduces batch with runReduce()', async () => {
         await localDeploy();
 
         // Add 4 valid messages, one invalid message
@@ -230,38 +257,38 @@ describe('SecretMessages02', () => {
         }
 
         const txn0 = await Mina.transaction(adminAccount, () => {
-            zkApp.dispatchIfValid(messageValid0, UInt64.from(0))
+            zkApp.dispatchIfValid(adminKey, messageValid0, UInt64.from(0))
         });
         await txn0.prove();
         await txn0.sign([adminKey]).send();
 
         const txn1 = await Mina.transaction(adminAccount, () => {
-            zkApp.dispatchIfValid(messageValid1, messageValid0.messageNumber)
+            zkApp.dispatchIfValid(adminKey, messageValid1, messageValid0.messageNumber)
         });
         await txn1.prove();
         await txn1.sign([adminKey]).send();
 
         const txn2 = await Mina.transaction(adminAccount, () => {
-            zkApp.dispatchIfValid(messageValid2, messageValid1.messageNumber)
+            zkApp.dispatchIfValid(adminKey, messageValid2, messageValid1.messageNumber)
         });
         await txn2.prove();
         await txn2.sign([adminKey]).send();
 
         const txn3 = await Mina.transaction(adminAccount, () => {
-            zkApp.dispatchIfValid(messageValid3, messageValid2.messageNumber)
+            zkApp.dispatchIfValid(adminKey, messageValid3, messageValid2.messageNumber)
         });
         await txn3.prove();
         await txn3.sign([adminKey]).send();
 
         const txn4 = await Mina.transaction(adminAccount, () => {
-            zkApp.dispatchIfValid(messageInvalid, messageValid3.messageNumber)
+            zkApp.dispatchIfValid(adminKey, messageInvalid, messageValid3.messageNumber)
         });
         await txn4.prove();
         await txn4.sign([adminKey]).send();
 
         // Now reduce and we should see 
         const txn5 = await Mina.transaction(adminAccount, () => {
-            zkApp.runReduce(Bool(false))
+            zkApp.runReduce(adminKey, Bool(false))
         });
         await txn5.prove();
         await txn5.sign([adminKey]).send();
@@ -276,32 +303,32 @@ describe('SecretMessages02', () => {
         // So test it by resubmitting the same batch except for messageNumber 4
 
         const txn6 = await Mina.transaction(adminAccount, () => {
-            zkApp.dispatchIfValid(messageValid0, UInt64.from(0))
+            zkApp.dispatchIfValid(adminKey, messageValid0, UInt64.from(0))
         });
         await txn6.prove();
         await txn6.sign([adminKey]).send();
 
         const txn7 = await Mina.transaction(adminAccount, () => {
-            zkApp.dispatchIfValid(messageValid1, messageValid0.messageNumber)
+            zkApp.dispatchIfValid(adminKey, messageValid1, messageValid0.messageNumber)
         });
         await txn7.prove();
         await txn7.sign([adminKey]).send();
 
         const txn8 = await Mina.transaction(adminAccount, () => {
-            zkApp.dispatchIfValid(messageValid2, messageValid1.messageNumber)
+            zkApp.dispatchIfValid(adminKey, messageValid2, messageValid1.messageNumber)
         });
         await txn8.prove();
         await txn8.sign([adminKey]).send();
 
         const txn9 = await Mina.transaction(adminAccount, () => {
-            zkApp.dispatchIfValid(messageInvalid, messageValid2.messageNumber)
+            zkApp.dispatchIfValid(adminKey, messageInvalid, messageValid2.messageNumber)
         });
         await txn9.prove();
         await txn9.sign([adminKey]).send();
 
         // Now reduce and we should see 
         const txn10 = await Mina.transaction(adminAccount, () => {
-            zkApp.runReduce(Bool(false))
+            zkApp.runReduce(adminKey, Bool(false))
         });
         await txn10.prove();
         await txn10.sign([adminKey]).send();
@@ -309,7 +336,62 @@ describe('SecretMessages02', () => {
         const messageNumFinal = zkApp.messageNumber.get();
         expect(messageNumFinal).toEqual(UInt64.from(3));
 
+        // Make sure splitBatch logic works -
+        // If we add more messages with numbers LOWER than 3, it should NOT change
+        // if they're part of the same batch!
+
+        const txn11 = await Mina.transaction(adminAccount, () => {
+            zkApp.dispatchIfValid(adminKey, messageValid0, UInt64.from(0))
+        });
+        await txn11.prove();
+        await txn11.sign([adminKey]).send();
+
+        const txn12 = await Mina.transaction(adminAccount, () => {
+            zkApp.dispatchIfValid(adminKey, messageValid1, messageValid0.messageNumber)
+        });
+        await txn12.prove();
+        await txn12.sign([adminKey]).send();
+
+        const txn13 = await Mina.transaction(adminAccount, () => {
+            // calling with splitBatch = true
+            zkApp.runReduce(adminKey, Bool(true))
+        });
+        await txn13.prove();
+        await txn13.sign([adminKey]).send();
+
+        const messageNumSame = zkApp.messageNumber.get();
+        expect(messageNumSame).toEqual(UInt64.from(3));
     })
 
+    it('passes integration test using processBatch()', async () => {
+        await localDeploy();
+
+        // Process two batches, make sure each one works...
+        let maxMessageNum = 20;
+        let numMessages = 15;
+        const batchLimit1 = 10;
+        const batch1: SecretMessage[] = buildBatch(maxMessageNum, numMessages)
+        maxMessageNum = 30
+        numMessages = 20;
+        const batchLimit2 = 30;
+        const batch2: SecretMessage[] = buildBatch(maxMessageNum, numMessages)
+        maxMessageNum = 10;
+        numMessages = 5;
+        const batchLimit3 = 10;
+        const batch3: SecretMessage[] = buildBatch(maxMessageNum, numMessages)
+
+        // set batchLimit to 10 so we split batch into two...
+        await processBatch(batch1, batchLimit1, zkApp, adminAccount, adminKey)
+        let messageNum = zkApp.messageNumber.get();
+        expect(messageNum).toEqual(UInt64.from(20));
+
+        await processBatch(batch2, batchLimit2, zkApp, adminAccount, adminKey)
+        messageNum = zkApp.messageNumber.get();
+        expect(messageNum).toEqual(UInt64.from(30));
+
+        await processBatch(batch3, batchLimit3, zkApp, adminAccount, adminKey)
+        messageNum = zkApp.messageNumber.get();
+        expect(messageNum).toEqual(UInt64.from(10));
+    })
 
 });
